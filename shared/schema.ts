@@ -225,6 +225,7 @@ export const ERROR_CODES = [
   'method_not_allowed',
   'forbidden_origin',
   'rate_limited',
+  'quota_exceeded',
   'server_misconfigured',
   'upstream_busy',
   'upstream_error',

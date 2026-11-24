@@ -15,5 +15,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/**/*.test.ts", "shared/**/*.test.ts", "server/**/*.test.ts", "src/vite-env.d.ts"]
+  "include": ["src/**/*.test.ts", "shared/**/*.test.ts", "server/**/*.test.ts", "forgebase/**/*.test.ts", "src/vite-env.d.ts"]
 }

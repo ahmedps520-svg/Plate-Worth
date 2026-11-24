@@ -1,0 +1,49 @@
+# Builds the PWA and publishes it to GitHub Pages:
+#   https://ahmedps520-svg.github.io/Plate-Worth/
+#
+# The built site is pushed to the `gh-pages` branch. In the repository's
+# Settings → Pages, "Build and deployment" must be set to
+# "Deploy from a branch" → gh-pages / (root) (one-time setup).
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - claude/gifted-ramanujan-9gj909
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build (uses .env.production → /Plate-Worth/ + ForgeBase endpoint)
+        run: npm run build
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: 'Deploy PlateWorth'

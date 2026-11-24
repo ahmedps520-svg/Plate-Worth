@@ -10,7 +10,15 @@ import { useScan } from '../lib/scan'
 import { useSettings } from '../lib/settings'
 
 /** Codes where resending the same photo can't help. */
-const NOT_RETRYABLE = new Set(['refused', 'bad_request', 'payload_too_large', 'unsupported_media_type', 'unsupported_image'])
+const NOT_RETRYABLE = new Set([
+  'refused',
+  'bad_request',
+  'payload_too_large',
+  'unsupported_media_type',
+  'unsupported_image',
+  'quota_exceeded',
+  'forbidden_origin',
+])
 
 export function ScanPage() {
   const { t } = useSettings()

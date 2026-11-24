@@ -42,6 +42,7 @@ async function events(res: Response): Promise<StreamEvent[]> {
 const deps = (estimate?: EstimateFn) => ({
   estimate: estimate ?? (async () => ({ result: okResult, model: 'claude-sonnet-5-5', searches: 0 })),
   limiter: new MemoryRateLimiter(100, 60),
+  dailyLimiter: new MemoryRateLimiter(1000, 86_400),
 })
 
 describe('handleEstimate: request validation', () => {
@@ -89,7 +90,7 @@ describe('handleEstimate: request validation', () => {
   })
 
   it('reports a missing API key as a server configuration error', async () => {
-    const res = await handleEstimate(post(scanBody), {}, { limiter: new MemoryRateLimiter(5, 60) })
+    const res = await handleEstimate(post(scanBody), {}, { limiter: new MemoryRateLimiter(5, 60), dailyLimiter: new MemoryRateLimiter(5, 60) })
     expect(res.status).toBe(500)
     expect((await res.json()).error.code).toBe('server_misconfigured')
   })
@@ -118,6 +119,35 @@ describe('handleEstimate: rate limiting', () => {
 
     const otherIp = await handleEstimate(post(scanBody, { 'x-forwarded-for': '198.51.100.1' }), env, shared)
     expect(otherIp.status).toBe(200)
+  })
+
+  it('uses the platform-provided client IP when given (ForgeBase ctx.client_ip)', async () => {
+    const shared = { ...deps(), limiter: new MemoryRateLimiter(1, 60) }
+    const a = await handleEstimate(post(scanBody, { 'x-forwarded-for': '1.1.1.1' }), env, { ...shared, clientIp: '198.51.100.5' })
+    expect(a.status).toBe(200)
+    await a.text()
+    // Same real client, different spoofed header: still limited.
+    const b = await handleEstimate(post(scanBody, { 'x-forwarded-for': '2.2.2.2' }), env, { ...shared, clientIp: '198.51.100.5' })
+    expect(b.status).toBe(429)
+  })
+
+  it('enforces the global daily cap with quota_exceeded', async () => {
+    const shared = { ...deps(), dailyLimiter: new MemoryRateLimiter(1, 86_400) }
+    const first = await handleEstimate(post(scanBody), env, shared)
+    expect(first.status).toBe(200)
+    await first.text()
+    const second = await handleEstimate(post(scanBody, { 'x-forwarded-for': '198.51.100.77' }), env, shared)
+    expect(second.status).toBe(429)
+    expect((await second.json()).error.code).toBe('quota_exceeded')
+  })
+
+  it('skips the daily cap when DAILY_SCAN_LIMIT is 0', async () => {
+    const shared = { ...deps(), dailyLimiter: new MemoryRateLimiter(1, 86_400) }
+    for (let i = 0; i < 3; i++) {
+      const res = await handleEstimate(post(scanBody), { ...env, DAILY_SCAN_LIMIT: '0' }, shared)
+      expect(res.status).toBe(200)
+      await res.text()
+    }
   })
 })
 

@@ -19,9 +19,14 @@ export interface ServerConfig {
     allowedDomains: string[] | undefined
   }
   rateLimit: { max: number; windowSeconds: number }
+  /** Max scans per UTC day across all users (0 = unlimited). Protects the API bill. */
+  dailyLimit: number
+  /** Overall time budget for one estimate; must stay under the host's function timeout. */
+  deadlineMs: number
   maxImageBytes: number
   allowedOrigins: string[] | undefined
-  upstash: { url: string; token: string } | undefined
+  /** ForgeBase project REST API + service key (injected by ForgeBase into edge functions). */
+  forgebase: { url: string; serviceKey: string } | undefined
 }
 
 export const DEFAULT_MODEL = 'claude-sonnet-5-5'
@@ -57,8 +62,8 @@ export function readConfig(env: Env): ServerConfig {
   const fallbackSetting = env.CLAUDE_REFUSAL_FALLBACK?.trim().toLowerCase() || 'auto'
   const version = env.WEB_SEARCH_TOOL_VERSION?.trim()
 
-  const upstashUrl = env.UPSTASH_REDIS_REST_URL?.trim()
-  const upstashToken = env.UPSTASH_REDIS_REST_TOKEN?.trim()
+  const forgebaseUrl = (env.FORGEBASE_URL ?? env.SUPABASE_URL)?.trim()
+  const forgebaseKey = (env.FORGEBASE_SERVICE_ROLE_KEY ?? env.SUPABASE_SERVICE_ROLE_KEY)?.trim()
 
   return {
     apiKey: env.ANTHROPIC_API_KEY?.trim() || undefined,
@@ -76,8 +81,12 @@ export function readConfig(env: Env): ServerConfig {
       max: int(env.RATE_LIMIT_MAX, 10, 1, 10_000),
       windowSeconds: int(env.RATE_LIMIT_WINDOW_SECONDS, 600, 1, 86_400),
     },
+    dailyLimit: int(env.DAILY_SCAN_LIMIT, 100, 0, 1_000_000),
+    // ForgeBase edge functions are capped at 120 s, so leave headroom by default.
+    deadlineMs: int(env.ESTIMATE_DEADLINE_MS, 110_000, 10_000, 290_000),
     maxImageBytes: int(env.MAX_IMAGE_BYTES, 4 * 1024 * 1024, 64 * 1024, 5 * 1024 * 1024),
     allowedOrigins: list(env.ALLOWED_ORIGINS)?.map((o) => o.replace(/\/+$/, '')),
-    upstash: upstashUrl && upstashToken ? { url: upstashUrl.replace(/\/+$/, ''), token: upstashToken } : undefined,
+    forgebase:
+      forgebaseUrl && forgebaseKey ? { url: forgebaseUrl.replace(/\/+$/, ''), serviceKey: forgebaseKey } : undefined,
   }
 }

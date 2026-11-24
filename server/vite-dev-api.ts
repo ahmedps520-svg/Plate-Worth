@@ -1,8 +1,8 @@
 /**
  * Serves POST /api/estimate from the Vite dev server (and `vite preview`) using
- * the exact same web-standard handler that runs on Vercel, so `npm run dev`
- * gives you the full app — camera, API and all — over HTTPS on your LAN
- * without installing the Vercel CLI.
+ * the exact same web-standard handler that runs as the ForgeBase edge
+ * function, so `npm run dev` gives you the full app — camera, API and all —
+ * over HTTPS on your LAN with your own key from .env.
  *
  * This file only runs inside Vite (Node). It never ships to the browser.
  */

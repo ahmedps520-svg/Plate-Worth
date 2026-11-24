@@ -16,6 +16,24 @@ import {
 
 export type ClientErrorCode = ErrorCode | 'offline' | 'network' | 'aborted'
 
+/**
+ * Where estimates come from. Production builds (GitHub Pages) call the
+ * ForgeBase edge function directly; `npm run dev` uses the local /api/estimate
+ * served by the Vite dev server. See .env.production.
+ */
+const ESTIMATE_URL: string = import.meta.env.VITE_ESTIMATE_URL || '/api/estimate'
+/** ForgeBase's browser-safe anon key (like Supabase's); not a secret. */
+const ANON_KEY: string | undefined = import.meta.env.VITE_FORGEBASE_ANON_KEY || undefined
+
+function requestHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/x-ndjson' }
+  if (ANON_KEY) {
+    headers.apikey = ANON_KEY
+    headers.authorization = `Bearer ${ANON_KEY}`
+  }
+  return headers
+}
+
 export class ApiError extends Error {
   readonly code: ClientErrorCode
   readonly status?: number
@@ -80,6 +98,7 @@ function asErrorCode(value: unknown): ErrorCode {
 
 function statusToCode(status: number): ErrorCode {
   if (status === 429) return 'rate_limited'
+  if (status === 403) return 'forbidden_origin'
   if (status === 413) return 'payload_too_large'
   if (status === 400 || status === 422) return 'bad_request'
   if (status === 504) return 'timeout'
@@ -117,9 +136,9 @@ export async function requestEstimate(
 
   let res: Response
   try {
-    res = await fetch('/api/estimate', {
+    res = await fetch(ESTIMATE_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/x-ndjson' },
+      headers: requestHeaders(),
       body: JSON.stringify(body),
       signal: opts.signal,
     })

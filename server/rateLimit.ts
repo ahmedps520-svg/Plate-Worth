@@ -1,14 +1,16 @@
 /**
- * Per-IP rate limiting.
+ * Rate limiting.
  *
- * - MemoryRateLimiter: sliding window kept in the function instance's memory.
- *   On Vercel (Fluid compute) instances are reused across requests, so this is
- *   effective against bursts, but limits are per instance.
- * - UpstashRateLimiter: fixed window in Upstash Redis over its REST API, shared
- *   by all instances. Used automatically when UPSTASH_REDIS_REST_URL/TOKEN are
- *   set. Falls back to the memory limiter if Redis is unreachable.
+ * - MemoryRateLimiter: sliding window in the function's memory. Effective
+ *   against bursts; resets when the worker restarts. Used locally and as a
+ *   fallback.
+ * - ForgeBaseRateLimiter: fixed windows counted in the ForgeBase project's
+ *   own database (table `rate_limits`, RPC `plateworth_rate_hit`), so limits
+ *   survive restarts. Used automatically inside ForgeBase edge functions,
+ *   which receive FORGEBASE_URL and FORGEBASE_SERVICE_ROLE_KEY. Falls back to
+ *   the memory limiter if the database can't be reached.
  *
- * Keys are SHA-256 hashes of the client IP so raw IPs are never stored.
+ * Keys are SHA-256 hashes of the client IP, so raw IPs are never stored.
  */
 export interface RateLimitResult {
   allowed: boolean
@@ -57,60 +59,75 @@ export class MemoryRateLimiter implements RateLimiter {
   }
 }
 
-export class UpstashRateLimiter implements RateLimiter {
-  private readonly url: string
-  private readonly token: string
-  private readonly max: number
-  private readonly windowSeconds: number
+/** Reads the counter from an RPC reply: 3, [3], {count: 3} or [{count: 3}]. */
+export function parseCount(body: unknown): number {
+  const first = Array.isArray(body) ? body[0] : body
+  const value = typeof first === 'object' && first !== null ? (first as { count?: unknown }).count : first
+  const n = Number(value)
+  if (!Number.isFinite(n)) throw new Error('Unexpected rate-limit reply')
+  return n
+}
+
+export class ForgeBaseRateLimiter implements RateLimiter {
+  private readonly opts: { url: string; serviceKey: string; max: number; windowSeconds: number; scope: string }
   private readonly fallback: RateLimiter
   private readonly fetchImpl: typeof fetch
+  private readonly now: () => number
 
   constructor(
-    opts: { url: string; token: string; max: number; windowSeconds: number },
+    opts: { url: string; serviceKey: string; max: number; windowSeconds: number; scope: string },
     fallback: RateLimiter,
-    fetchImpl: typeof fetch = fetch,
+    deps: { fetch?: typeof fetch; now?: () => number } = {},
   ) {
-    this.url = opts.url
-    this.token = opts.token
-    this.max = opts.max
-    this.windowSeconds = opts.windowSeconds
+    this.opts = opts
     this.fallback = fallback
-    this.fetchImpl = fetchImpl
+    this.fetchImpl = deps.fetch ?? fetch
+    this.now = deps.now ?? Date.now
+  }
+
+  private rpc(name: string, args: Record<string, unknown>): Promise<Response> {
+    const { url, serviceKey } = this.opts
+    return this.fetchImpl(`${url}/rest/v1/rpc/${name}`, {
+      method: 'POST',
+      headers: { apikey: serviceKey, authorization: `Bearer ${serviceKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify(args),
+      signal: AbortSignal.timeout(3_000),
+    })
   }
 
   async check(key: string): Promise<RateLimitResult> {
-    const redisKey = `plateworth:rl:${key}`
+    const { max, windowSeconds, scope } = this.opts
+    const nowSec = Math.floor(this.now() / 1000)
+    const windowStart = nowSec - (nowSec % windowSeconds)
     try {
-      const res = await this.fetchImpl(`${this.url}/pipeline`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify([
-          ['INCR', redisKey],
-          ['EXPIRE', redisKey, String(this.windowSeconds), 'NX'],
-          ['TTL', redisKey],
-        ]),
-        signal: AbortSignal.timeout(2_000),
-      })
-      if (!res.ok) throw new Error(`Upstash responded ${res.status}`)
-      const [incr, , ttl] = (await res.json()) as Array<{ result?: number; error?: string }>
-      const count = Number(incr?.result)
-      if (!Number.isFinite(count)) throw new Error(incr?.error ?? 'Unexpected Upstash response')
-      const ttlSeconds = Number(ttl?.result)
-      if (count > this.max) {
-        return { allowed: false, remaining: 0, retryAfter: ttlSeconds > 0 ? ttlSeconds : this.windowSeconds }
+      const res = await this.rpc('plateworth_rate_hit', { key: `${scope}:${key}`, window_start: windowStart })
+      if (!res.ok) throw new Error(`ForgeBase responded ${res.status}`)
+      const count = parseCount(await res.json())
+      // Occasionally drop windows older than two days so the table stays tiny.
+      if (Math.random() < 0.02) void this.rpc('plateworth_rate_cleanup', { before: nowSec - 2 * 86_400 }).catch(() => {})
+      if (count > max) {
+        return { allowed: false, remaining: 0, retryAfter: Math.max(1, windowStart + windowSeconds - nowSec) }
       }
-      return { allowed: true, remaining: this.max - count, retryAfter: 0 }
+      return { allowed: true, remaining: max - count, retryAfter: 0 }
     } catch (error) {
-      console.warn('[rate-limit] Upstash unavailable, using in-memory limiter:', (error as Error).message)
+      console.warn('[rate-limit] database unavailable, using in-memory limiter:', (error as Error).message)
       return this.fallback.check(key)
     }
   }
 }
 
-/** Best-effort client IP from proxy headers (Vercel sets x-forwarded-for). */
+/**
+ * Best-effort client IP from proxy headers. cf-connecting-ip (set by
+ * Cloudflare, which fronts ForgeBase) is preferred: the first X-Forwarded-For
+ * entry can be supplied by the client.
+ */
 export function clientIp(headers: Headers): string {
-  const forwarded = headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-  return forwarded || headers.get('x-real-ip')?.trim() || 'unknown'
+  return (
+    headers.get('cf-connecting-ip')?.trim() ||
+    headers.get('x-real-ip')?.trim() ||
+    headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    'unknown'
+  )
 }
 
 export async function hashKey(value: string): Promise<string> {

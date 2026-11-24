@@ -2,7 +2,7 @@
   "name": "plateworth",
   "private": true,
   "version": "1.0.0",
-  "description": "Scan Saudi license plates and get AI-estimated vehicle and plate values in SAR.",
+  "description": "Scan Saudi license plates and get AI-estimated vehicle and plate values in SAR. Static PWA on GitHub Pages + ForgeBase edge function.",
   "type": "module",
   "engines": {
     "node": ">=20.19"
@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc -b && vite build",
+    "build:function": "vite build --config vite.function.config.ts",
+    "deploy:function": "npm run build:function && node scripts/deploy-forgebase.mjs",
     "preview": "vite preview --host",
     "typecheck": "tsc -b",
     "lint": "oxlint",

@@ -14,6 +14,8 @@ const API_COPY: Record<string, { title: MessageKey; body: MessageKey; icon: Luci
   network: { title: 'error.network.title', body: 'error.network.body', icon: WifiOff },
   rate_limited: { title: 'error.rate_limited.title', body: 'error.rate_limited.body', icon: Clock },
   upstream_busy: { title: 'error.upstream_busy.title', body: 'error.upstream_busy.body', icon: Clock },
+  quota_exceeded: { title: 'error.quota_exceeded.title', body: 'error.quota_exceeded.body', icon: Clock },
+  forbidden_origin: { title: 'error.forbidden_origin.title', body: 'error.forbidden_origin.body', icon: AlertTriangle },
   timeout: { title: 'error.timeout.title', body: 'error.timeout.body', icon: Clock },
   refused: { title: 'error.refused.title', body: 'error.refused.body', icon: ScanSearch },
   invalid_output: { title: 'error.invalid_output.title', body: 'error.invalid_output.body', icon: AlertTriangle },

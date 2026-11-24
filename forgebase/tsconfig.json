@@ -1,0 +1,21 @@
+{
+  // Type-checks the server code exactly as it runs on Node (native ESM), which
+  // is why relative imports in server/ and shared/ use explicit ".js" endings.
+  "compilerOptions": {
+    "tsBuildInfoFile": "../node_modules/.tmp/tsconfig.forgebase.tsbuildinfo",
+    "target": "es2022",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["./*.ts", "../server/**/*.ts", "../shared/**/*.ts"],
+  "exclude": ["./*.test.ts", "../server/**/*.test.ts", "../shared/**/*.test.ts", "../server/vite-dev-api.ts"]
+}

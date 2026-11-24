@@ -1,6 +1,7 @@
 /**
- * POST /api/estimate — web-standard (Request → Response) handler shared by the
- * Vercel function (api/estimate.ts) and the Vite dev server.
+ * The estimate endpoint — a web-standard (Request → Response) handler shared
+ * by the ForgeBase edge function (forgebase/estimate.ts) and the Vite dev
+ * server (/api/estimate).
  *
  * Validation and rate limiting happen up front and fail with a JSON error
  * body and a matching HTTP status. Once accepted, the response is an NDJSON
@@ -12,7 +13,7 @@ import { z } from 'zod'
 import { readConfig, type Env, type ServerConfig } from './config.js'
 import { EstimateError, runEstimate, toEstimateError, type EstimateOutcome, type RunOptions } from './claude.js'
 import { checkImage } from './image.js'
-import { MemoryRateLimiter, UpstashRateLimiter, clientIp, hashKey, type RateLimiter } from './rateLimit.js'
+import { ForgeBaseRateLimiter, MemoryRateLimiter, clientIp, hashKey, type RateLimiter } from './rateLimit.js'
 import {
   estimateRequestSchema,
   type ErrorBody,
@@ -21,8 +22,6 @@ import {
   type StreamEvent,
 } from '../shared/schema.js'
 
-/** Stay under the Vercel function's maxDuration (300 s in vercel.json). */
-const DEADLINE_MS = 280_000
 /** Keeps mobile networks/proxies from dropping a quiet connection. */
 const HEARTBEAT_MS = 15_000
 
@@ -30,34 +29,45 @@ export type EstimateFn = (config: ServerConfig, request: EstimateRequest, opts: 
 
 export interface HandlerDeps {
   estimate?: EstimateFn
+  /** Per-IP limiter (default: ForgeBase database, else in-memory). */
   limiter?: RateLimiter
+  /** Global per-day limiter (default: ForgeBase database, else in-memory). */
+  dailyLimiter?: RateLimiter
+  /** Client IP determined by the platform (ForgeBase passes ctx.client_ip). */
+  clientIp?: string
+  /** Platform abort signal (function timeout / client gone). */
+  signal?: AbortSignal
   now?: () => number
 }
 
-let clientCache: { apiKey: string; client: Anthropic } | undefined
-let limiterCache: { key: string; limiter: RateLimiter } | undefined
+const DAY_SECONDS = 86_400
 
-function getClient(apiKey: string): Anthropic {
-  if (clientCache?.apiKey !== apiKey) {
-    clientCache = { apiKey, client: new Anthropic({ apiKey, maxRetries: 2, timeout: 240_000 }) }
+let clientCache: { key: string; client: Anthropic } | undefined
+const limiterCache = new Map<string, RateLimiter>()
+
+function getClient(apiKey: string, timeoutMs: number): Anthropic {
+  const key = `${apiKey}:${timeoutMs}`
+  if (clientCache?.key !== key) {
+    clientCache = { key, client: new Anthropic({ apiKey, maxRetries: 2, timeout: timeoutMs }) }
   }
   return clientCache.client
 }
 
-function getLimiter(config: ServerConfig): RateLimiter {
-  const key = JSON.stringify([config.rateLimit, config.upstash?.url])
-  if (limiterCache?.key !== key) {
-    const memory = new MemoryRateLimiter(config.rateLimit.max, config.rateLimit.windowSeconds)
-    const limiter = config.upstash
-      ? new UpstashRateLimiter({ ...config.upstash, ...config.rateLimit }, memory)
+function getLimiter(config: ServerConfig, scope: 'ip' | 'day', max: number, windowSeconds: number): RateLimiter {
+  const key = JSON.stringify([scope, max, windowSeconds, config.forgebase?.url])
+  let limiter = limiterCache.get(key)
+  if (!limiter) {
+    const memory = new MemoryRateLimiter(max, windowSeconds)
+    limiter = config.forgebase
+      ? new ForgeBaseRateLimiter({ ...config.forgebase, max, windowSeconds, scope }, memory)
       : memory
-    limiterCache = { key, limiter }
+    limiterCache.set(key, limiter)
   }
-  return limiterCache.limiter
+  return limiter
 }
 
 const defaultEstimate: EstimateFn = (config, request, opts) =>
-  runEstimate(getClient(config.apiKey ?? ''), config, request, opts)
+  runEstimate(getClient(config.apiKey ?? '', config.deadlineMs), config, request, opts)
 
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -180,8 +190,9 @@ export async function handleEstimate(request: Request, env: Env, deps: HandlerDe
     }
   }
 
-  const limiter = deps.limiter ?? getLimiter(config)
-  const limit = await limiter.check(await hashKey(clientIp(request.headers)))
+  const ip = deps.clientIp || clientIp(request.headers)
+  const limiter = deps.limiter ?? getLimiter(config, 'ip', config.rateLimit.max, config.rateLimit.windowSeconds)
+  const limit = await limiter.check(await hashKey(ip))
   if (!limit.allowed) {
     return errorResponse(429, 'rate_limited', 'Too many scans. Please wait a moment and try again.', {
       headers: { ...cors, 'retry-after': String(limit.retryAfter) },
@@ -189,7 +200,18 @@ export async function handleEstimate(request: Request, env: Env, deps: HandlerDe
     })
   }
 
-  return streamEstimate(request, config, body, deps.estimate ?? defaultEstimate, now, {
+  if (config.dailyLimit > 0) {
+    const daily = deps.dailyLimiter ?? getLimiter(config, 'day', config.dailyLimit, DAY_SECONDS)
+    const quota = await daily.check('all')
+    if (!quota.allowed) {
+      return errorResponse(429, 'quota_exceeded', 'This app has reached its scan limit for today.', {
+        headers: { ...cors, 'retry-after': String(quota.retryAfter) },
+        retryAfter: quota.retryAfter,
+      })
+    }
+  }
+
+  return streamEstimate(request, config, body, deps.estimate ?? defaultEstimate, now, deps.signal, {
     ...cors,
     'x-ratelimit-remaining': String(limit.remaining),
   })
@@ -201,13 +223,16 @@ function streamEstimate(
   body: EstimateRequest,
   estimate: EstimateFn,
   now: () => number,
+  platformSignal: AbortSignal | undefined,
   headers: Record<string, string>,
 ): Response {
   const encoder = new TextEncoder()
   const startedAt = now()
   const cancelled = new AbortController()
-  const deadline = AbortSignal.timeout(DEADLINE_MS)
-  const signal = AbortSignal.any([request.signal, deadline, cancelled.signal])
+  const deadline = AbortSignal.timeout(config.deadlineMs)
+  const signal = AbortSignal.any(
+    [request.signal, deadline, cancelled.signal, platformSignal].filter((s): s is AbortSignal => Boolean(s)),
+  )
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {

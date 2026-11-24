@@ -24,7 +24,7 @@ export function HomePage() {
     <div className="pb-6">
       <header className="flex items-center gap-3 pt-safe">
         <div className="flex min-h-16 items-center gap-2.5">
-          <img src="/favicon.svg" alt="" className="size-9 rounded-xl" />
+          <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="size-9 rounded-xl" />
           <span className="text-xl font-bold tracking-tight">{t('app.name')}</span>
         </div>
       </header>

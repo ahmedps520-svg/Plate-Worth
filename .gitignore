@@ -15,10 +15,11 @@ coverage
 .env
 .env.*
 !.env.example
+!.env.production
 *.local
 
-# Vercel
-.vercel
+# Bundled ForgeBase function (build output)
+forgebase/dist
 
 # Editor / OS
 .vscode/*
