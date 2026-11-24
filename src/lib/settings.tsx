@@ -14,6 +14,8 @@ export interface Settings {
 // Keep in sync with public/theme-init.js (applies the theme before React loads).
 export const SETTINGS_STORAGE_KEY = 'plateworth.settings.v1'
 const ACK_STORAGE_KEY = 'plateworth.firstRunAck.v1'
+/** The user's own Anthropic API key. Stored only in this browser's localStorage. */
+const API_KEY_STORAGE_KEY = 'plateworth.anthropicKey.v1'
 const THEME_COLORS: Record<Theme, string> = { dark: '#0a0f0d', light: '#f5f7f4' }
 
 function readStorage(key: string): string | null {
@@ -24,12 +26,20 @@ function readStorage(key: string): string | null {
   }
 }
 
-function writeStorage(key: string, value: string): void {
+function writeStorage(key: string, value: string | null): void {
   try {
-    localStorage.setItem(key, value)
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
   } catch {
     // private mode / storage disabled: settings just won't persist
   }
+}
+
+/** "sk-ant-api03-…AbCd" → "sk-ant-…AbCd" for display. */
+export function maskApiKey(key: string): string {
+  const trimmed = key.trim()
+  if (trimmed.length <= 12) return '••••'
+  return `${trimmed.slice(0, 7)}…${trimmed.slice(-4)}`
 }
 
 function loadSettings(): Settings {
@@ -54,6 +64,9 @@ interface SettingsContextValue extends Settings {
   update: (patch: Partial<Settings>) => void
   firstRunAcknowledged: boolean
   acknowledgeFirstRun: () => void
+  /** The user's Anthropic API key, or null when none is saved on this device. */
+  apiKey: string | null
+  setApiKey: (key: string | null) => void
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null)
@@ -61,6 +74,13 @@ const SettingsContext = createContext<SettingsContextValue | null>(null)
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [acknowledged, setAcknowledged] = useState(() => readStorage(ACK_STORAGE_KEY) === '1')
+  const [apiKey, setApiKeyState] = useState<string | null>(() => readStorage(API_KEY_STORAGE_KEY) || null)
+
+  const setApiKey = useCallback((key: string | null) => {
+    const value = key?.trim() || null
+    writeStorage(API_KEY_STORAGE_KEY, value)
+    setApiKeyState(value)
+  }, [])
 
   const update = useCallback((patch: Partial<Settings>) => {
     setSettings((prev) => {
@@ -93,8 +113,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const t = useCallback<Translate>((key, vars) => translate(settings.locale, key, vars), [settings.locale])
 
   const value = useMemo<SettingsContextValue>(
-    () => ({ ...settings, dir, t, update, firstRunAcknowledged: acknowledged, acknowledgeFirstRun }),
-    [settings, dir, t, update, acknowledged, acknowledgeFirstRun],
+    () => ({ ...settings, dir, t, update, firstRunAcknowledged: acknowledged, acknowledgeFirstRun, apiKey, setApiKey }),
+    [settings, dir, t, update, acknowledged, acknowledgeFirstRun, apiKey, setApiKey],
   )
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>

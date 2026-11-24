@@ -5,7 +5,7 @@ import { PageHeader } from '../components/AppChrome'
 import { ConfidenceBadge } from '../components/ConfidenceBadge'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { ErrorState } from '../components/ErrorState'
-import { apiErrorCopy } from '../lib/errorCopy'
+import { apiErrorCopy, isKeyError } from '../lib/errorCopy'
 import { LoadingProgress } from '../components/LoadingProgress'
 import { PlateDisplay } from '../components/PlateDisplay'
 import { PriceRange } from '../components/PriceRange'
@@ -13,7 +13,7 @@ import { SourcesList } from '../components/SourcesList'
 import { useToast } from '../components/Toast'
 import { Button, Card, IconButton, SectionTitle, Spinner } from '../components/ui'
 import { VehicleEditor } from '../components/VehicleEditor'
-import { ApiError, requestEstimate } from '../lib/api'
+import { ApiError } from '../lib/apiError'
 import { deleteScan, getScan, saveScan, type ScanRecord } from '../lib/db'
 import { formatDateTime } from '../lib/format'
 import { mergeReestimate } from '../lib/merge'
@@ -29,7 +29,7 @@ interface Pending {
 }
 
 export function ResultPage({ id }: { id: string }) {
-  const { t, locale } = useSettings()
+  const { t, locale, apiKey } = useSettings()
   const toast = useToast()
   const [record, setRecord] = useState<ScanRecord | null | undefined>(undefined)
   const [editing, setEditing] = useState(false)
@@ -60,9 +60,11 @@ export function ResultPage({ id }: { id: string }) {
       setReestimateError(null)
       setPending({ stage: 'searching', startedAt: Date.now() })
       try {
+        const { requestEstimate } = await import('../lib/api')
         const { result, meta } = await requestEstimate(
           { type: 'reestimate', plate: record.result.plate, vehicle: correction, locale },
           {
+            apiKey,
             signal: controller.signal,
             onProgress: ({ stage, detail }) =>
               setPending((p) => (p ? { ...p, stage, detail: detail ?? (stage === p.stage ? p.detail : undefined) } : p)),
@@ -83,14 +85,18 @@ export function ResultPage({ id }: { id: string }) {
         if (controller.signal.aborted) return
         const code = error instanceof ApiError ? error.code : 'internal'
         if (code !== 'aborted') {
-          setReestimateError({ code, retryAfter: error instanceof ApiError ? error.retryAfter : undefined })
+          setReestimateError({
+            code,
+            retryAfter: error instanceof ApiError ? error.retryAfter : undefined,
+            details: error instanceof ApiError ? error.details : undefined,
+          })
         }
       } finally {
         if (abortRef.current === controller) abortRef.current = null
         setPending(null)
       }
     },
-    [record, locale, toast, t],
+    [record, locale, apiKey, toast, t],
   )
 
   const header = (
@@ -268,7 +274,17 @@ export function ResultPage({ id }: { id: string }) {
             <div className="mt-4 rounded-2xl bg-danger/8 p-4 ring-1 ring-danger/25">
               <p className="font-semibold text-danger">{apiErrorCopy(reestimateError, t).title}</p>
               <p className="mt-1 text-sm text-muted">{apiErrorCopy(reestimateError, t).body}</p>
-              {lastCorrection && (
+              {apiErrorCopy(reestimateError, t).details && (
+                <p className="mt-2 text-xs text-muted" dir="auto">
+                  {apiErrorCopy(reestimateError, t).details}
+                </p>
+              )}
+              {isKeyError(reestimateError.code) && (
+                <Button size="sm" className="mt-3 me-2" onClick={() => navigate({ name: 'settings' })}>
+                  {t('error.openSettings')}
+                </Button>
+              )}
+              {lastCorrection && !isKeyError(reestimateError.code) && (
                 <Button
                   size="sm"
                   variant="secondary"

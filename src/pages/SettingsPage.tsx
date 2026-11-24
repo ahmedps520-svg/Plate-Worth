@@ -1,5 +1,6 @@
 import { Trash2 } from 'lucide-react'
 import { useState } from 'react'
+import { ApiKeyCard } from '../components/ApiKeyCard'
 import { PageHeader } from '../components/AppChrome'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Segmented, Toggle } from '../components/Segmented'
@@ -19,6 +20,8 @@ export function SettingsPage() {
     <>
       <PageHeader title={t('settings.title')} />
       <div className="space-y-4 pb-6">
+        <ApiKeyCard />
+
         <Card>
           <SectionTitle>{t('settings.language')}</SectionTitle>
           <Segmented

@@ -4,17 +4,15 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
-import { devApi } from './server/vite-dev-api.ts'
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
 
 /**
  * Production builds get a Content-Security-Policy <meta> tag, because GitHub
- * Pages can't send custom response headers. connect-src allows the app's own
- * origin plus the estimate API (ForgeBase).
+ * Pages can't send custom response headers. The only server the app talks to
+ * is Anthropic's API (with the user's own key).
  */
-function contentSecurityPolicy(apiUrl: string | undefined): Plugin {
-  const apiOrigin = apiUrl && /^https?:\/\//.test(apiUrl) ? new URL(apiUrl).origin : ''
+function contentSecurityPolicy(): Plugin {
   const policy = [
     "default-src 'self'",
     "script-src 'self'",
@@ -22,7 +20,7 @@ function contentSecurityPolicy(apiUrl: string | undefined): Plugin {
     "img-src 'self' data: blob:",
     "media-src 'self' blob:",
     "font-src 'self'",
-    `connect-src 'self' ${apiOrigin}`.trim(),
+    "connect-src 'self' https://api.anthropic.com",
     "worker-src 'self'",
     "manifest-src 'self'",
     "base-uri 'self'",
@@ -39,9 +37,7 @@ function contentSecurityPolicy(apiUrl: string | undefined): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  // Load every variable from .env / .env.local (not only VITE_*). These are
-  // handed to the dev API middleware only; nothing here is exposed to the
-  // client bundle because only VITE_* variables are ever inlined by Vite.
+  // BASE_PATH comes from .env.production; DEV_HTTPS from the shell or .env.
   const serverEnv = { ...loadEnv(mode, process.cwd(), ''), ...process.env }
   const useHttps = serverEnv.DEV_HTTPS !== 'false'
   // GitHub Pages serves this repo under /Plate-Worth/ (set in .env.production).
@@ -58,8 +54,7 @@ export default defineConfig(({ mode }) => {
       // Self-signed HTTPS so the camera works when you open the dev server
       // from a phone on the same Wi-Fi (getUserMedia needs a secure context).
       ...(useHttps ? [basicSsl({ name: 'plateworth-dev' })] : []),
-      devApi(serverEnv),
-      contentSecurityPolicy(serverEnv.VITE_ESTIMATE_URL),
+      contentSecurityPolicy(),
       VitePWA({
         registerType: 'prompt',
         injectRegister: false,
@@ -107,11 +102,10 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           // Offline app shell: precache the built JS/CSS/HTML, icons and the
-          // Arabic + Latin font files. The estimate API is never cached (scans
-          // need a connection); history lives in IndexedDB so it works offline.
+          // Arabic + Latin font files. Calls to Anthropic are never cached
+          // (scans need a connection); history lives in IndexedDB offline.
           globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2,webmanifest}'],
           navigateFallback: 'index.html',
-          navigateFallbackDenylist: [/^\/api\//],
           cleanupOutdatedCaches: true,
         },
         devOptions: {

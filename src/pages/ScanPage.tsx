@@ -1,11 +1,11 @@
-import { Camera, ImageUp, RotateCcw, ScanSearch, X } from 'lucide-react'
+import { Camera, ImageUp, KeyRound, RotateCcw, ScanSearch, Settings, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { CameraView } from '../components/CameraView'
 import { ErrorState } from '../components/ErrorState'
-import { apiErrorCopy } from '../lib/errorCopy'
+import { apiErrorCopy, isKeyError } from '../lib/errorCopy'
 import { LoadingProgress } from '../components/LoadingProgress'
 import { Button, IconButton } from '../components/ui'
-import { goBack } from '../lib/router'
+import { goBack, navigate } from '../lib/router'
 import { useScan } from '../lib/scan'
 import { useSettings } from '../lib/settings'
 
@@ -16,12 +16,12 @@ const NOT_RETRYABLE = new Set([
   'payload_too_large',
   'unsupported_media_type',
   'unsupported_image',
-  'quota_exceeded',
-  'forbidden_origin',
+  'missing_api_key',
+  'invalid_api_key',
 ])
 
 export function ScanPage() {
-  const { t } = useSettings()
+  const { t, apiKey } = useSettings()
   const scan = useScan()
   const { status } = scan
   const fileRef = useRef<HTMLInputElement>(null)
@@ -43,6 +43,36 @@ export function ScanPage() {
   const close = () => {
     scan.reset()
     goBack({ name: 'home' })
+  }
+
+  const openSettings = () => {
+    scan.reset()
+    navigate({ name: 'settings' }, { replace: true })
+  }
+  const settingsButton = (
+    <Button size="lg" icon={<Settings className="size-5" />} onClick={openSettings}>
+      {t('error.openSettings')}
+    </Button>
+  )
+
+  // No key yet: don't open the camera, point to Settings instead.
+  if (status.phase === 'idle' && !apiKey) {
+    return (
+      <div className="fixed inset-0 z-40 flex flex-col bg-canvas pt-safe pb-safe">
+        <div className="flex justify-end p-3">
+          <IconButton label={t('scan.close')} onClick={close}>
+            <X className="size-6" />
+          </IconButton>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-6 pb-16">
+          <ErrorState
+            tone="warn"
+            copy={{ title: t('error.missing_api_key.title'), body: t('error.missing_api_key.body'), icon: KeyRound }}
+            actions={settingsButton}
+          />
+        </div>
+      </div>
+    )
   }
 
   if (status.phase === 'idle') {
@@ -100,12 +130,13 @@ export function ScanPage() {
               copy={apiErrorCopy(status.error, t)}
               actions={
                 <>
+                  {isKeyError(status.error.code) && settingsButton}
                   {canRetry && (
                     <Button size="lg" icon={<RotateCcw className="size-5" />} onClick={scan.retry}>
                       {t('common.retry')}
                     </Button>
                   )}
-                  {retakeButton(!canRetry)}
+                  {retakeButton(!canRetry && !isKeyError(status.error.code))}
                   {uploadButton}
                 </>
               }

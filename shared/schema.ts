@@ -1,10 +1,11 @@
 /**
- * Shared contract between the PWA and the /api/estimate function.
+ * Data contract for estimates: what the app sends to Claude and what it
+ * accepts back.
  *
  * `estimateResultSchema` validates what Claude returns. It is deliberately
  * forgiving about *formatting* (numbers sent as "85,000", stray whitespace,
  * swapped low/high, Arabic-Indic digits) and normalizes those, but strict
- * about *structure*, so a malformed answer triggers one retry server-side.
+ * about *structure*, so a malformed answer triggers one retry.
  */
 import { z } from 'zod'
 import { normalizeArabicLetters, normalizeDigits, normalizeLatinLetters } from './plate.js'
@@ -153,7 +154,7 @@ export function parseEstimateReply(text: string): ParseOutcome {
 }
 
 // ---------------------------------------------------------------------------
-// Requests (PWA → /api/estimate)
+// Requests (what the app asks Claude to estimate)
 // ---------------------------------------------------------------------------
 
 export const imageInputSchema = z.object({
@@ -212,26 +213,25 @@ export type EstimateRequestInput = z.input<typeof estimateRequestSchema>
 export type EstimateRequest = z.output<typeof estimateRequestSchema>
 
 // ---------------------------------------------------------------------------
-// Response stream (NDJSON, one event per line)
+// Progress, errors and metadata
 // ---------------------------------------------------------------------------
 
 export const PROGRESS_STAGES = ['reading', 'searching', 'finalizing'] as const
 export type ProgressStage = (typeof PROGRESS_STAGES)[number]
 
 export const ERROR_CODES = [
+  'missing_api_key',
+  'invalid_api_key',
+  'offline',
+  'network',
   'bad_request',
-  'unsupported_media_type',
-  'payload_too_large',
-  'method_not_allowed',
-  'forbidden_origin',
   'rate_limited',
-  'quota_exceeded',
-  'server_misconfigured',
   'upstream_busy',
   'upstream_error',
   'invalid_output',
   'refused',
   'timeout',
+  'aborted',
   'internal',
 ] as const
 export type ErrorCode = (typeof ERROR_CODES)[number]
@@ -240,14 +240,4 @@ export interface EstimateMeta {
   model: string
   searches: number
   durationMs: number
-}
-
-export type StreamEvent =
-  | { type: 'progress'; stage: ProgressStage; detail?: string }
-  | { type: 'result'; result: EstimateResult; meta: EstimateMeta }
-  | { type: 'error'; code: ErrorCode; message: string; retryAfter?: number }
-  | { type: 'ping' }
-
-export interface ErrorBody {
-  error: { code: ErrorCode; message: string; retryAfter?: number; details?: string }
 }

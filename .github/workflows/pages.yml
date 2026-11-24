@@ -36,7 +36,7 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build (uses .env.production → /Plate-Worth/ + ForgeBase endpoint)
+      - name: Build (uses .env.production → base path /Plate-Worth/)
         run: npm run build
 
       - name: Publish to gh-pages

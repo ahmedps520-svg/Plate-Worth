@@ -14,12 +14,9 @@ coverage
 # Environment (never commit real secrets)
 .env
 .env.*
-!.env.example
 !.env.production
 *.local
 
-# Bundled ForgeBase function (build output)
-forgebase/dist
 
 # Editor / OS
 .vscode/*

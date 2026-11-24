@@ -1,4 +1,4 @@
-import { Camera, ImageUp, WifiOff } from 'lucide-react'
+import { Camera, ImageUp, KeyRound, WifiOff } from 'lucide-react'
 import { useRef } from 'react'
 import { PlateDisplay } from '../components/PlateDisplay'
 import { ScanListItem } from '../components/ScanListItem'
@@ -13,7 +13,7 @@ import { useScans } from '../lib/useScans'
 const STEPS: MessageKey[] = ['home.step1', 'home.step2', 'home.step3']
 
 export function HomePage() {
-  const { t } = useSettings()
+  const { t, apiKey } = useSettings()
   const online = useOnline()
   const scans = useScans()
   const { startFromFile } = useScan()
@@ -46,11 +46,23 @@ export function HomePage() {
         </div>
       )}
 
+      {!apiKey && (
+        <div className="mb-4 rounded-2xl bg-brand-500/10 p-4 ring-1 ring-brand-500/30 animate-fade-in" role="status">
+          <div className="flex items-start gap-3">
+            <KeyRound className="mt-0.5 size-5 shrink-0 text-brand-500" />
+            <p className="text-sm leading-relaxed">{t('home.needKey')}</p>
+          </div>
+          <Button size="sm" className="mt-3" block onClick={() => navigate({ name: 'settings' }, { replace: true })}>
+            {t('home.addKey')}
+          </Button>
+        </div>
+      )}
+
       <div className="space-y-3">
         <Button
           size="lg"
           block
-          disabled={!online}
+          disabled={!online || !apiKey}
           icon={<Camera className="size-6" />}
           className="min-h-16 text-xl"
           onClick={() => navigate({ name: 'scan' })}
@@ -61,7 +73,7 @@ export function HomePage() {
           size="lg"
           variant="secondary"
           block
-          disabled={!online}
+          disabled={!online || !apiKey}
           icon={<ImageUp className="size-5" />}
           onClick={() => fileRef.current?.click()}
         >

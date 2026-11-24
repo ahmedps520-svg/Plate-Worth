@@ -7,7 +7,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { isPlateUnreadable } from '../../shared/plate'
 import type { ProgressStage } from '../../shared/schema'
-import { ApiError, requestEstimate, type ClientErrorCode } from './api'
+import { ApiError, type ClientErrorCode } from './apiError'
 import { newScanId, saveScan } from './db'
 import { decodeImageFile, preparePhoto, type PreparedPhoto } from './image'
 import { navigate } from './router'
@@ -16,6 +16,7 @@ import { useSettings } from './settings'
 export interface ScanErrorInfo {
   code: ClientErrorCode | 'unsupported_image'
   retryAfter?: number
+  details?: string
 }
 
 export type ScanStatus =
@@ -38,7 +39,7 @@ interface ScanContextValue {
 const ScanContext = createContext<ScanContextValue | null>(null)
 
 export function ScanProvider({ children }: { children: ReactNode }) {
-  const { locale } = useSettings()
+  const { locale, apiKey } = useSettings()
   const [status, setStatus] = useState<ScanStatus>({ phase: 'idle' })
   const abortRef = useRef<AbortController | null>(null)
   const lastPhotoRef = useRef<PreparedPhoto | null>(null)
@@ -52,6 +53,8 @@ export function ScanProvider({ children }: { children: ReactNode }) {
       setStatus({ phase: 'processing', preview: photo.preview, stage: 'reading', startedAt: Date.now() })
 
       try {
+        // The Anthropic SDK is loaded on first use to keep the app shell light.
+        const { requestEstimate } = await import('./api')
         const { result, meta } = await requestEstimate(
           {
             type: 'scan',
@@ -62,6 +65,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
             locale,
           },
           {
+            apiKey,
             signal: controller.signal,
             onProgress: ({ stage, detail }) =>
               setStatus((s) =>
@@ -87,14 +91,16 @@ export function ScanProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         if (controller.signal.aborted) return
         const info: ScanErrorInfo =
-          error instanceof ApiError ? { code: error.code, retryAfter: error.retryAfter } : { code: 'internal' }
+          error instanceof ApiError
+            ? { code: error.code, retryAfter: error.retryAfter, details: error.details }
+            : { code: 'internal' }
         if (info.code === 'aborted') return
         setStatus({ phase: 'error', preview: photo.preview, error: info })
       } finally {
         if (abortRef.current === controller) abortRef.current = null
       }
     },
-    [locale],
+    [locale, apiKey],
   )
 
   const startFromPhoto = useCallback((photo: PreparedPhoto) => void run(photo), [run])

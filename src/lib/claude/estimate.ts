@@ -10,8 +10,8 @@
  *   results, so the UI never shows a hallucinated URL.
  */
 import Anthropic from '@anthropic-ai/sdk'
-import type { ServerConfig } from './config.js'
-import { SYSTEM_PROMPT, buildRetryMessage, buildUserContent } from './prompt.js'
+import type { ClaudeConfig } from './config'
+import { SYSTEM_PROMPT, buildRetryMessage, buildUserContent } from './prompt'
 import {
   parseEstimateReply,
   type ErrorCode,
@@ -19,7 +19,7 @@ import {
   type EstimateResult,
   type ProgressStage,
   type Source,
-} from '../shared/schema.js'
+} from '../../../shared/schema'
 
 type BetaContentBlock = Anthropic.Beta.BetaContentBlock
 type BetaMessageParam = Anthropic.Beta.BetaMessageParam
@@ -30,15 +30,16 @@ const MAX_SOURCES = 8
 
 export class EstimateError extends Error {
   readonly code: ErrorCode
-  readonly status: number
   readonly retryAfter?: number
+  /** Anthropic's own error message, shown under the friendly one (e.g. low credit). */
+  readonly details?: string
 
-  constructor(code: ErrorCode, message: string, status = 502, retryAfter?: number) {
+  constructor(code: ErrorCode, message: string, opts: { retryAfter?: number; details?: string } = {}) {
     super(message)
     this.name = 'EstimateError'
     this.code = code
-    this.status = status
-    this.retryAfter = retryAfter
+    this.retryAfter = opts.retryAfter
+    this.details = opts.details
   }
 }
 
@@ -57,7 +58,7 @@ export interface RunOptions {
 /** The slice of the SDK client this module uses (lets tests pass a fake). */
 export type ClaudeClient = Pick<Anthropic, 'beta'>
 
-export function buildWebSearchTool(config: ServerConfig): Anthropic.Beta.BetaToolUnion {
+export function buildWebSearchTool(config: ClaudeConfig): Anthropic.Beta.BetaToolUnion {
   const common = {
     name: 'web_search' as const,
     max_uses: config.webSearch.maxUses,
@@ -145,7 +146,7 @@ class SourceTracker {
 
 export async function runEstimate(
   client: ClaudeClient,
-  config: ServerConfig,
+  config: ClaudeConfig,
   request: EstimateRequest,
   opts: RunOptions = {},
 ): Promise<EstimateOutcome> {
@@ -200,20 +201,20 @@ export async function runEstimate(
     sources.collect(message.content)
 
     if (message.stop_reason === 'refusal') {
-      throw new EstimateError('refused', 'The AI declined to analyze this image. Try a different photo.', 422)
+      throw new EstimateError('refused', 'The AI declined to analyze this image. Try a different photo.')
     }
 
     if (message.stop_reason === 'pause_turn') {
       // The server-side tool loop paused; send the turn back so it resumes.
       if (++continuations > MAX_CONTINUATIONS) {
-        throw new EstimateError('upstream_error', 'The AI did not finish its research in time.', 502)
+        throw new EstimateError('upstream_error', 'The AI did not finish its research in time.')
       }
       messages.push({ role: 'assistant', content: message.content })
       continue
     }
 
     if (message.stop_reason === 'max_tokens') {
-      throw new EstimateError('invalid_output', 'The AI reply was cut off. Please try again.', 502)
+      throw new EstimateError('invalid_output', 'The AI reply was cut off. Please try again.')
     }
 
     const parsed = parseEstimateReply(finalAnswerText(message.content))
@@ -226,7 +227,7 @@ export async function runEstimate(
     }
 
     if (retried) {
-      throw new EstimateError('invalid_output', 'The AI returned an answer in an unexpected format.', 502)
+      throw new EstimateError('invalid_output', 'The AI returned an answer in an unexpected format.')
     }
     retried = true
     console.warn('[estimate] invalid model JSON, retrying once:', parsed.error.slice(0, 500))
@@ -245,36 +246,44 @@ function retryAfterSeconds(error: InstanceType<typeof Anthropic.APIError>): numb
   return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
+/** Anthropic's human-readable message from an SDK error ("Your credit balance is too low…"). */
+export function anthropicMessage(error: InstanceType<typeof Anthropic.APIError>): string {
+  const body = error.error as { error?: { message?: unknown }; message?: unknown } | undefined
+  const message = body?.error?.message ?? body?.message
+  return typeof message === 'string' && message.trim() ? message.trim() : error.message
+}
+
 /** Maps any thrown value to a user-presentable EstimateError. */
 export function toEstimateError(error: unknown, timedOut = false): EstimateError {
   if (error instanceof EstimateError) return error
   if (timedOut) {
-    return new EstimateError('timeout', 'The estimate took too long. Please try again.', 504)
+    return new EstimateError('timeout', 'The estimate took too long. Please try again.')
   }
   if (error instanceof Anthropic.APIUserAbortError) {
-    return new EstimateError('timeout', 'The request was cancelled.', 499)
+    return new EstimateError('aborted', 'The request was cancelled.')
   }
   if (error instanceof Anthropic.APIConnectionTimeoutError) {
-    return new EstimateError('timeout', 'The AI service took too long to respond. Please try again.', 504)
-  }
-  if (error instanceof Anthropic.RateLimitError) {
-    return new EstimateError('upstream_busy', 'The AI service is busy. Please try again shortly.', 503, retryAfterSeconds(error) ?? 30)
+    return new EstimateError('timeout', 'Anthropic took too long to respond. Please try again.')
   }
   if (error instanceof Anthropic.AuthenticationError || error instanceof Anthropic.PermissionDeniedError) {
-    console.error('[estimate] Anthropic credentials rejected:', error.message)
-    return new EstimateError('server_misconfigured', 'The server is not configured correctly.', 500)
+    return new EstimateError('invalid_api_key', 'Anthropic rejected the API key.', { details: anthropicMessage(error) })
   }
-  if (error instanceof Anthropic.BadRequestError || error instanceof Anthropic.NotFoundError) {
-    console.error('[estimate] Anthropic rejected the request:', error.message)
-    return new EstimateError('upstream_error', 'The AI service could not process this request.', 502)
+  if (error instanceof Anthropic.RateLimitError) {
+    return new EstimateError('rate_limited', 'Anthropic rate limit reached for this key.', {
+      retryAfter: retryAfterSeconds(error) ?? 60,
+      details: anthropicMessage(error),
+    })
   }
   if (error instanceof Anthropic.InternalServerError) {
-    return new EstimateError('upstream_busy', 'The AI service is temporarily unavailable. Please try again.', 503, 20)
+    return new EstimateError('upstream_busy', 'Anthropic is temporarily unavailable. Please try again.', { retryAfter: 20 })
+  }
+  if (error instanceof Anthropic.APIConnectionError) {
+    return new EstimateError('network', 'Could not reach Anthropic. Check your connection.')
   }
   if (error instanceof Anthropic.APIError) {
-    console.error('[estimate] Anthropic API error:', error.status, error.message)
-    return new EstimateError('upstream_error', 'The AI service returned an error. Please try again.', 502)
+    // 400/404 etc.: e.g. low credit balance or a model the key can't use.
+    return new EstimateError('upstream_error', 'Anthropic returned an error.', { details: anthropicMessage(error) })
   }
   console.error('[estimate] unexpected error:', error)
-  return new EstimateError('internal', 'Something went wrong on our side. Please try again.', 500)
+  return new EstimateError('internal', 'Something went wrong. Please try again.')
 }

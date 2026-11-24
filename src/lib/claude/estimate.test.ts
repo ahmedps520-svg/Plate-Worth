@@ -1,8 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { describe, expect, it } from 'vitest'
-import type { EstimateRequest } from '../shared/schema'
-import { EstimateError, runEstimate, toEstimateError, type ClaudeClient } from './claude'
-import { readConfig } from './config'
+import type { EstimateRequest } from '../../../shared/schema'
+import { EstimateError, runEstimate, toEstimateError, type ClaudeClient } from './estimate'
+import { claudeConfig } from './config'
 
 type Block = Record<string, unknown>
 interface FakeMessage {
@@ -72,7 +72,7 @@ const scanRequest = {
   image: { mediaType: 'image/jpeg', data: 'abc' },
   locale: 'en',
 } as EstimateRequest
-const config = readConfig({ ANTHROPIC_API_KEY: 'k' })
+const config = claudeConfig()
 
 describe('runEstimate', () => {
   it('returns a validated result, keeps only sources seen in search results, and reports progress', async () => {
@@ -104,11 +104,9 @@ describe('runEstimate', () => {
 
   it('omits fallbacks when disabled and honors the web search version setting', async () => {
     const { client, calls } = fakeClient([{ content: [text(JSON.stringify(result))], stop_reason: 'end_turn' }])
-    const custom = readConfig({
-      ANTHROPIC_API_KEY: 'k',
-      CLAUDE_REFUSAL_FALLBACK: 'off',
-      WEB_SEARCH_TOOL_VERSION: 'web_search_20260209',
-      WEB_SEARCH_ALLOWED_DOMAINS: 'haraj.com.sa, syarah.com',
+    const custom = claudeConfig({
+      refusalFallback: false,
+      webSearch: { version: 'web_search_20260209', maxUses: 5, allowedDomains: ['haraj.com.sa', 'syarah.com'] },
     })
     await runEstimate(client, custom, scanRequest)
     expect(calls[0].fallbacks).toBeUndefined()
@@ -166,12 +164,22 @@ describe('runEstimate', () => {
 describe('toEstimateError', () => {
   it('maps SDK errors to user-facing codes', () => {
     const rate = new Anthropic.RateLimitError(429, undefined, 'slow down', new Headers({ 'retry-after': '12' }))
-    expect(toEstimateError(rate)).toMatchObject({ code: 'upstream_busy', retryAfter: 12 })
+    expect(toEstimateError(rate)).toMatchObject({ code: 'rate_limited', retryAfter: 12 })
 
-    const auth = new Anthropic.AuthenticationError(401, undefined, 'bad key', new Headers())
-    expect(toEstimateError(auth).code).toBe('server_misconfigured')
+    const auth = new Anthropic.AuthenticationError(401, undefined, 'invalid x-api-key', new Headers())
+    expect(toEstimateError(auth)).toMatchObject({ code: 'invalid_api_key' })
+
+    const credit = new Anthropic.BadRequestError(
+      400,
+      { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low' } },
+      undefined,
+      new Headers(),
+    )
+    expect(toEstimateError(credit)).toMatchObject({ code: 'upstream_error', details: 'Your credit balance is too low' })
 
     expect(toEstimateError(new Anthropic.APIUserAbortError(), true).code).toBe('timeout')
+    expect(toEstimateError(new Anthropic.APIUserAbortError()).code).toBe('aborted')
+    expect(toEstimateError(new Anthropic.APIConnectionError({ message: 'offline' })).code).toBe('network')
     expect(toEstimateError(new Error('boom')).code).toBe('internal')
 
     const own = new EstimateError('refused', 'no')

@@ -4,8 +4,8 @@
  * user message.
  */
 import type Anthropic from '@anthropic-ai/sdk'
-import { SAUDI_PLATE_LETTERS } from '../shared/plate.js'
-import type { EstimateRequest, Locale } from '../shared/schema.js'
+import { SAUDI_PLATE_LETTERS } from '../../../shared/plate'
+import type { EstimateRequest, Locale } from '../../../shared/schema'
 
 const LETTER_TABLE = SAUDI_PLATE_LETTERS.map((l) => `${l.arabic}=${l.latin}`).join('  ')
 
