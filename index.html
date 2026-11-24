@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta http-equiv="Content-Security-Policy" content="default-src &#39;self&#39;; script-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; img-src &#39;self&#39; data: blob:; media-src &#39;self&#39; blob:; font-src &#39;self&#39;; connect-src &#39;self&#39; https://api.anthropic.com; worker-src &#39;self&#39;; manifest-src &#39;self&#39;; base-uri &#39;self&#39;; form-action &#39;self&#39;">
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>PlateWorth</title>
+    <meta
+      name="description"
+      content="Scan a Saudi license plate to get rough AI-estimated values for the vehicle and the plate in SAR."
+    />
+    <meta name="theme-color" content="#0a0f0d" />
+    <meta name="color-scheme" content="dark light" />
+
+    <link rel="icon" href="/Plate-Worth/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/Plate-Worth/favicon.svg" type="image/svg+xml" sizes="any" />
+    <link rel="apple-touch-icon" href="/Plate-Worth/apple-touch-icon-180x180.png" />
+
+    <!-- iOS standalone (Add to Home Screen) -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="PlateWorth" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- Applies saved theme/language before first paint (external file so the CSP needs no 'unsafe-inline'). -->
+    <script src="/Plate-Worth/theme-init.js"></script>
+    <script type="module" crossorigin src="/Plate-Worth/assets/index-CPqr4HXZ.js"></script>
+    <link rel="stylesheet" crossorigin href="/Plate-Worth/assets/index-DgDVbzEu.css">
+  <link rel="manifest" href="/Plate-Worth/manifest.webmanifest"></head>
+  <body>
+    <noscript>PlateWorth needs JavaScript to run.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
